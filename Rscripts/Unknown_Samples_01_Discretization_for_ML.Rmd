@@ -1,0 +1,54 @@
+---
+title: "From Skyline exports to ML"
+author: "Clarisse Gotti"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+
+```{r, echo=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, message = F)
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(RColorBrewer)
+library(janitor)
+library(data.table)
+library(gplots)
+```
+
+
+Input file :       
+
+```{r}
+# Import data
+files <- list.files(path = "Skyline/ExportSkyline", pattern = "ExportSkyline.csv", full.names = T)
+
+# Data
+dat <- lapply(files, fread, sep = ";", dec = ",")  
+
+# Peptide detected or not
+dat_id <- rbindlist(dat, use.names = T) %>%
+  as.data.frame %>%
+  rename_with(., ~ gsub(" ", ".", .)) %>%
+  filter(Protein.Name != "CytoC" & Transition.Note == "x") %>%   #
+  as.data.frame %>%
+  mutate(Detected = ifelse(is.na(Area), "FALSE", "TRUE")) %>%
+  dplyr::select(-Area, -Protein.Name, -Precursor.Mz, -Product.Mz, -Fragment.Ion, -Transition.Note) %>%
+  spread(Replicate.Name, Detected) %>% 
+  t %>%
+  as.data.frame %>%
+  row_to_names(row_number = 1) %>%
+  mutate(ID = rownames(.)) %>% 
+  relocate(ID, .before = AAAENIIPNSTGAAK)
+
+
+# Export for ML
+write.table(dat_id, "Input_For_ML.txt", row.names = F, sep = "\t")
+```
+
