@@ -1,0 +1,175 @@
+---
+title: "Inoculations - Reproducibility"
+author: "Clarisse Gotti"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+
+```{r, echo=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, message = F)
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(RColorBrewer)
+library(janitor)
+library(data.table)
+library(scales)
+library(cowplot)
+```
+
+&nbsp;   
+&nbsp;  
+
+
+
+## Quantification 
+
+```{r fig.height = 6, fig.width = 8}
+
+# Import data to quantify
+all_files <- list.files(path = "Skyline/ExportSkyline/", pattern = ".csv", full.names = T) 
+l <- lapply(all_files, fread, sep = ";", dec = ",") 
+dat <- do.call(rbind.data.frame, l)
+colnames(dat) <- gsub(" ", ".", colnames(dat))
+
+
+# CytoC    
+CytoC_dat <- dat %>%
+  filter(!grepl("S6", Replicate.Name) & Protein.Name == "CytoC" & Transition.Note == "x") %>%
+  mutate(Area = gsub("#N/A", NA, Area) %>% as.numeric)  %>%
+  spread(Replicate.Name, Area)
+
+# Calculate the mediane for all column
+CytoC_med <- data.frame(Med_CytoC = apply(CytoC_dat[7:ncol(CytoC_dat)] , 2, function(x) {median(x, na.rm = T)}) ) %>%
+  mutate(Med_CytoC_log = log2(Med_CytoC))
+
+# Spikes - Quantification based on a single transition
+Spike_dat <- dat %>%
+  filter(!grepl("S6", Replicate.Name) & Protein.Name != "CytoC" & Transition.Note == "x") %>%
+  mutate(Area = gsub("#N/A", NA, Area) %>% as.numeric)  %>%
+  spread(Replicate.Name, Area)
+
+
+# Median intensity of CytoC over the samples
+CytoC_med_all <- CytoC_med %>% dplyr::summarise(Med = median(Med_CytoC, na.rm = T)) %>% pull
+
+# Calculate the normalization factor MEDIANE
+factor_norm <- CytoC_med$Med_CytoC / 1050641.75
+
+# Normalization 
+Spike_dat_norm <- Spike_dat
+Spike_dat_norm[7:ncol(Spike_dat_norm)] <- t(apply(Spike_dat[7:ncol(Spike_dat)], 1, "/", factor_norm))
+Spike_dat_norm <- Spike_dat_norm %>%
+  dplyr::select(-c(Protein.Name, Precursor.Mz, Product.Mz, Fragment.Ion, Transition.Note)) %>%
+  gather(Spl, Int, -Peptide.Sequence) %>%
+  na.omit %>% as.data.frame
+
+# Regressions for 3 peptides to quant the bacteria
+reg <- read.csv("R_Input/Quant_Regressions_Data.txt", sep = "\t")
+
+# Quantification
+quant <- Spike_dat_norm %>%
+  mutate(Spl2 = Spl) %>%
+  separate(Spl2, c("Bact", "Matrix", "Rep", "Inj"), sep = "_") %>%
+  mutate(Bact_pep = paste(Bact, Peptide.Sequence, sep = "_")) %>%
+  filter(Bact_pep %in% reg$bact_pep) 
+
+# Stats
+quant_stat <- quant %>%
+  group_by(Peptide.Sequence, Bact, Matrix) %>%
+  dplyr::summarise(Int_Mean = mean(Int), 
+                   Int_sd = sd(Int)) %>% as.data.frame %>%
+  mutate(Int_rsd = Int_sd / Int_Mean * 100, 
+         Matrix = factor(Matrix, levels = c("Pool-Tris", "Tris", "HV", "Patient", "Patient-Centri")))
+
+mu <- quant_stat %>%
+  group_by(Matrix) %>%
+  dplyr::summarise(mean_rsd = round(mean(Int_rsd), 1)) %>%
+  mutate(Matrix = factor(Matrix, levels = c("Pool-Tris", "Tris", "HV", "Patient", "Patient-Centri")))
+  
+  
+```
+
+
+**Coefficient of variation**
+
+Calculated on the 3 peptides used for the quantification of each bacteria
+
+```{r fig.height = 3.5, fig.width = 7}
+# Color
+col <- read.csv("../230424_Gamme_Spikes_Used-for-publication/R_Input/bact_color.txt", sep = "\t") %>%
+  filter(Abbreviation == "Eco" | Abbreviation == "Efa" | Abbreviation == "Kpn" | Abbreviation == "Sag" ) 
+
+# Plot
+p <- ggplot(quant_stat, aes(Bact, Int_rsd, color = Bact, group = Bact)) + 
+  geom_point(position = position_dodge()) + 
+  #geom_text(data = mu, aes(label = mu$mean_rsd), size = 2) + #, x = "Eco", y = 125
+  geom_hline(data = mu, aes(yintercept = mu$mean_rsd), linetype = "dashed") +
+  scale_color_manual(values = c("#ca6a40", "#b53220",  "#e79d94", "#16664d")) +
+  scale_y_continuous(limits = c(0, 100)) +
+  facet_grid(. ~ Matrix, scales = "free_x") +
+  labs(x = "", y = "Coefficients of variation (%)") +
+  theme_minimal() +
+  theme(panel.border = element_rect(color = 'black', fill = NA),
+        legend.title = element_blank(),
+        legend.position = "bottom", 
+        axis.text.x = element_blank())
+
+print(p)
+
+pdf("R_Output/Fig4_Reproducibility.pdf", height = 3.5, width = 7)
+p
+dev.off()
+
+print(mu)
+```
+
+&nbsp;  
+&nbsp;  
+
+**Intensity**
+
+```{r fig.height = 4.5, fig.width = 7}
+x <- quant_stat %>%
+  mutate(Bact_Pep = paste(Bact, Peptide.Sequence, sep = "_"))
+
+# Colors Bact_pep
+x_col <- c("#ca6a40", "#db8c69", "#e8c1b0",
+       "#b53220", "#ba4e3f", "#c48d86", 
+       "#e79d94", "#f0bab4", "#f5d8d5", 
+       "#16664d", "#47a88a", "#97dbc6")
+
+
+# Plot
+p2 <- ggplot(x, aes(Matrix, Int_Mean, color = Bact_Pep, group = Bact_Pep)) + 
+  geom_point(position = position_dodge()) + 
+  geom_line() +
+  geom_errorbar(aes(ymin = Int_Mean - Int_sd, ymax = Int_Mean + Int_sd), width = 0.2) + 
+  scale_color_manual(values = x_col) +
+  scale_y_continuous(trans = "log2",labels = scientific) +
+  facet_grid(. ~ Bact, scales = "free_x") +
+  labs(x = "", y = "log2(Area)") +
+  theme_minimal() +
+  theme(panel.border = element_rect(color = 'black', fill = NA),
+        legend.title = element_blank(),
+        legend.position = "bottom", 
+        axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.25))
+
+print(p2)
+
+pdf("R_Output/SuppFig_Reproducibility_Intensity.pdf", height = 4.5, width = 7)
+p2
+dev.off()
+
+
+```
+
+&nbsp;  
+&nbsp;  
+
