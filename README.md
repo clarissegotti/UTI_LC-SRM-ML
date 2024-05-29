@@ -1,4 +1,4 @@
-### 4 scripts provided :
+### 4 R scripts provided :
 
 - *Inoculations_Quantification_Linear_Regressions_Pearson* allows to generate the calibration curves based on the 360 inoculations dataset (15 bacterial species x 6 concentrations x 4 replicates), as well as Pearson correlation
 
