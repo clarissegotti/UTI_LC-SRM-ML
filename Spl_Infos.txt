@@ -1,3 +1,0 @@
-Urine	predicted
-Spl1	Cfr
-Spl2	Eco
